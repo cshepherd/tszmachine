@@ -1,0 +1,34 @@
+{
+  "name": "tszm",
+  "version": "0.9.0",
+  "description": "TypeScript Z-Machine implementation",
+  "author": {
+    "name": "Christopher Shepherd"
+  },
+  "main": "dist/tszm.js",
+  "types": "dist/tszm.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:dev": "node build.mjs && chmod +x dist/tszm.js",
+    "prepublishOnly": "npm run build",
+    "test": "jest",
+    "test:ci": "jest --ci --coverage",
+    "test:coverage": "jest --coverage",
+    "test:watch": "jest --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.8.1",
+    "esbuild": "^0.25.10",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.4",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2"
+  }
+}
