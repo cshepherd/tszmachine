@@ -94,6 +94,7 @@ export function h_show_status(vm: any) {
   const statusLineSequence =
     "\x1b7" +           // Save cursor position
     "\x1b[1;1H" +       // Move to line 1, column 1
+    "\x1b[K" +          // Clear line
     "\x1b[7m" +         // Reverse video
     finalStatusLine +
     "\x1b[0m" +         // Reset attributes

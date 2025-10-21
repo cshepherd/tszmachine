@@ -306,8 +306,23 @@ async function h_sread(vm, operands) {
     }
     const textBufferAddr = operands[0];
     const parseBufferAddr = operands[1];
+    // Position cursor at the input line (outside scrolling region)
+    // For V4+ games, this ensures the prompt doesn't interfere with game text
+    // For V3 games, the status line update already positioned cursor correctly,
+    // and game text is printed AFTER sread returns, so we don't move the cursor
+    if (vm.header.version >= 4) {
+        const termHeight = vm.terminalHeight || 24;
+        vm.inputOutputDevice.writeString(`\x1b[${termHeight};1H`);
+    }
     // Read input from user
     const input = await vm.inputOutputDevice.readLine();
+    // After input, clear the lower window and position cursor at start
+    // This ensures old content doesn't interfere with the new response
+    if (vm.header.version >= 4) {
+        const scrollTop = (vm.splitWindowLines || 0) + 1;
+        // Move to start of lower window and clear from cursor to end of screen
+        vm.inputOutputDevice.writeString(`\x1b[${scrollTop};1H\x1b[J`);
+    }
     if (vm.trace) {
         console.log(`@sread: textBufferAddr=0x${textBufferAddr.toString(16)}, parseBufferAddr=0x${parseBufferAddr.toString(16)}, input="${input}"`);
     }
