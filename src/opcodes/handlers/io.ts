@@ -559,16 +559,19 @@ export async function h_read_char(
 export async function h_save(
   vm: any,
   _operands: number[],
-  ctx: { branch?: (condition: boolean) => void; branchInfo?: { offset: number; branchOnTrue: boolean; branchBytes: number } },
+  ctx: { branch?: (condition: boolean) => void; store?: (v: number) => void; branchInfo?: { offset: number; branchOnTrue: boolean; branchBytes: number } },
 ) {
   // For v1-3, SAVE is a branch instruction. The decoder has already read the branch
   // offset bytes and advanced PC past them. We need to save the PC pointing to those
   // branch bytes (before they were read), so when we restore we can read and apply them.
   //
-  // The decoder tells us exactly how many bytes it read via ctx.branchInfo.branchBytes.
+  // For v4+, SAVE is a store instruction. The decoder has already read the store variable
+  // byte and advanced PC past it. We need to save the PC pointing to that store byte,
+  // so when we restore we can read it and store the result value.
   let savedPC = vm.pc;
 
-  if (ctx.branchInfo) {
+  if (vm.header && vm.header.version <= 3 && ctx.branchInfo) {
+    // V1-3: Branch instruction
     // Use the actual number of branch bytes read by the decoder
     const branchBytes = ctx.branchInfo.branchBytes;
 
@@ -576,9 +579,34 @@ export async function h_save(
     savedPC = vm.pc - branchBytes;
 
     if (vm.trace) {
-      console.log(`@save: PC=${vm.pc.toString(16)}, branchBytes=${branchBytes}, savedPC=${savedPC.toString(16)}`);
+      console.log(`@save (V${vm.header.version}): PC=${vm.pc.toString(16)}, branchBytes=${branchBytes}, savedPC=${savedPC.toString(16)}`);
+    }
+  } else if (vm.header && vm.header.version >= 4) {
+    // V4+: Store instruction
+    // Subtract 1 to point to the store variable byte
+    savedPC = vm.pc - 1;
+
+    if (vm.trace) {
+      console.log(`@save (V${vm.header.version}): PC=${vm.pc.toString(16)}, savedPC=${savedPC.toString(16)} (pointing to store byte)`);
     }
   }
+
+  // Helper to indicate success/failure based on version
+  const indicateSuccess = () => {
+    if (vm.header && vm.header.version >= 4) {
+      ctx.store?.(1); // V4+: store 1 for success
+    } else {
+      ctx.branch?.(true); // V1-3: branch on true for success
+    }
+  };
+
+  const indicateFailure = () => {
+    if (vm.header && vm.header.version >= 4) {
+      ctx.store?.(0); // V4+: store 0 for failure
+    } else {
+      ctx.branch?.(false); // V1-3: branch on false for failure
+    }
+  };
 
   try {
     const saveData = await vm.saveData(savedPC);
@@ -587,7 +615,7 @@ export async function h_save(
       if (vm.trace) {
         console.log(`@save failed: could not generate save data`);
       }
-      ctx.branch?.(false);
+      indicateFailure();
       return;
     }
 
@@ -600,7 +628,7 @@ export async function h_save(
       if (vm.trace) {
         console.log(`@save: saved to ${savePath}`);
       }
-      ctx.branch?.(true);
+      indicateSuccess();
     } else if (vm.runtime === 'browser') {
       // In browser environment, save to localStorage using game identifier
       const header = vm.getHeader();
@@ -608,7 +636,7 @@ export async function h_save(
         if (vm.trace) {
           console.log(`@save failed: could not get game header`);
         }
-        ctx.branch?.(false);
+        indicateFailure();
         return;
       }
 
@@ -622,19 +650,19 @@ export async function h_save(
       if (vm.trace) {
         console.log(`@save: saved ${saveData.length} bytes to localStorage key "${saveKey}"`);
       }
-      ctx.branch?.(true);
+      indicateSuccess();
     } else {
       // In other environments, just indicate success
       if (vm.trace) {
         console.log(`@save: generated save data (${saveData.length} bytes) but not persisting (unknown environment)`);
       }
-      ctx.branch?.(true);
+      indicateSuccess();
     }
   } catch (error) {
     if (vm.trace) {
       console.log(`@save failed: ${error}`);
     }
-    ctx.branch?.(false);
+    indicateFailure();
   }
 }
 

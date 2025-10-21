@@ -18,6 +18,7 @@ export declare function h_read_char(vm: any, [one, time, routine]: number[], ctx
 }): Promise<void>;
 export declare function h_save(vm: any, _operands: number[], ctx: {
     branch?: (condition: boolean) => void;
+    store?: (v: number) => void;
     branchInfo?: {
         offset: number;
         branchOnTrue: boolean;

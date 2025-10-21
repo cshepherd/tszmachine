@@ -11,9 +11,35 @@ exports.h_set_attr = h_set_attr;
 exports.h_clear_attr = h_clear_attr;
 exports.h_jin = h_jin;
 exports.h_insert_obj = h_insert_obj;
+// Helper function to validate object IDs
+function isValidObjectId(vm, objectId) {
+    if (objectId === 0)
+        return true; // 0 is a valid "null" object
+    // For V4+, max object number is typically < 1000
+    // Calculate max based on static memory size
+    if (vm.header) {
+        const propertyDefaultSize = vm.header.version <= 3 ? 31 * 2 : 63 * 2;
+        const objectEntrySize = vm.header.version <= 3 ? 9 : 14;
+        const objectTableStart = vm.header.objectTableAddress + propertyDefaultSize;
+        const staticMemStart = vm.header.staticMemoryAddress;
+        const maxObjects = Math.floor((staticMemStart - objectTableStart) / objectEntrySize);
+        if (objectId > maxObjects || objectId > 2000) {
+            console.error(`Invalid object ID ${objectId} (0x${objectId.toString(16)}). ` +
+                `Max objects for this game: ${maxObjects}. ` +
+                `This suggests memory corruption or a bug in variable handling.`);
+            return false;
+        }
+    }
+    return true;
+}
 function h_get_sibling(vm, [objectId], ctx) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
+        ctx.store?.(0);
+        ctx.branch?.(false);
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -32,6 +58,11 @@ function h_get_child(vm, [objectId], ctx) {
         console.error("Memory or header not loaded");
         return;
     }
+    if (!isValidObjectId(vm, objectId)) {
+        ctx.store?.(0);
+        ctx.branch?.(false);
+        return;
+    }
     const objectAddress = vm.getObjectAddress(objectId);
     let childValue;
     if (vm.header.version <= 3) {
@@ -46,6 +77,10 @@ function h_get_child(vm, [objectId], ctx) {
 function h_get_parent(vm, [objectId], ctx) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
+        ctx.store?.(0);
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -64,6 +99,9 @@ function h_remove_obj(vm, [objectId]) {
         return;
     }
     if (objectId === 0) {
+        return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
         return;
     }
     const objAddress = vm.getObjectAddress(objectId);
@@ -141,6 +179,9 @@ function h_print_obj(vm, [objectId]) {
         console.error("Memory or header not loaded");
         return;
     }
+    if (!isValidObjectId(vm, objectId)) {
+        return;
+    }
     const objectAddress = vm.getObjectAddress(objectId);
     // Get property table address
     const objectEntrySize = vm.header.version <= 3 ? 9 : 14;
@@ -154,6 +195,10 @@ function h_print_obj(vm, [objectId]) {
 function h_test_attr(vm, [objectId, attrNum], ctx) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
+        ctx.branch?.(false);
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -173,6 +218,9 @@ function h_set_attr(vm, [objectId, attrNum]) {
         console.error("Memory or header not loaded");
         return;
     }
+    if (!isValidObjectId(vm, objectId)) {
+        return;
+    }
     const objectAddress = vm.getObjectAddress(objectId);
     const attrByteCount = vm.header.version <= 3 ? 4 : 6;
     const attrByteIndex = Math.floor(attrNum / 8);
@@ -188,6 +236,9 @@ function h_set_attr(vm, [objectId, attrNum]) {
 function h_clear_attr(vm, [objectId, attrNum]) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -207,6 +258,10 @@ function h_jin(vm, [obj1, obj2], ctx) {
         console.error("Memory or header not loaded");
         return;
     }
+    if (!isValidObjectId(vm, obj1)) {
+        ctx.branch?.(false);
+        return;
+    }
     const obj1Address = vm.getObjectAddress(obj1);
     let parent;
     if (vm.header.version <= 3) {
@@ -220,6 +275,9 @@ function h_jin(vm, [obj1, obj2], ctx) {
 function h_insert_obj(vm, [objectId, destId]) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!isValidObjectId(vm, objectId) || !isValidObjectId(vm, destId)) {
         return;
     }
     const objAddress = vm.getObjectAddress(objectId);

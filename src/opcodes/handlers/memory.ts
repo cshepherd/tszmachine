@@ -77,6 +77,23 @@ export function h_storew(vm: any, [arrayAddr, wordIndex, value]: number[]) {
     return;
   }
 
+  // Warn if writing to header region (offsets 0x00-0x3F)
+  if (addr >= 0x00 && addr <= 0x3F) {
+    console.warn(
+      `STOREW: Writing to header region at 0x${addr.toString(16)} ` +
+        `(array=0x${arrayAddr.toString(16)}, index=${signedIndex}, value=0x${value.toString(16)}). ` +
+        `This may corrupt critical header fields!`
+    );
+  }
+
+  // Special warning for object table address (0x0a-0x0b)
+  if (addr === 0x0a) {
+    console.error(
+      `STOREW: CRITICAL - Writing to object table address field at 0x${addr.toString(16)}! ` +
+        `Old value=0x${vm.memory.readUInt16BE(addr).toString(16)}, new value=0x${value.toString(16)}`
+    );
+  }
+
   vm.memory.writeUInt16BE(value, addr);
 }
 
@@ -96,6 +113,23 @@ export function h_storeb(vm: any, [arrayAddr, byteIndex, value]: number[]) {
         `Memory size: 0x${vm.memory.length.toString(16)}`,
     );
     return;
+  }
+
+  // Warn if writing to header region (offsets 0x00-0x3F)
+  if (addr >= 0x00 && addr <= 0x3F) {
+    console.warn(
+      `STOREB: Writing to header region at 0x${addr.toString(16)} ` +
+        `(array=0x${arrayAddr.toString(16)}, index=${signedIndex}, value=0x${value.toString(16)}). ` +
+        `This may corrupt critical header fields!`
+    );
+  }
+
+  // Special warning for object table address bytes (0x0a-0x0b)
+  if (addr === 0x0a || addr === 0x0b) {
+    console.error(
+      `STOREB: CRITICAL - Writing to object table address field at 0x${addr.toString(16)}! ` +
+        `Old value=0x${vm.memory.readUInt8(addr).toString(16)}, new value=0x${value.toString(16)}`
+    );
   }
 
   vm.memory.writeUInt8(value, addr);
