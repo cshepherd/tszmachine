@@ -53,6 +53,9 @@ export function h_loadb(
   }
 
   const value = vm.memory.readUInt8(addr);
+  if (vm.trace && addr === 0x21) {
+    console.log(`@loadb Reading screen width from 0x21: value=${value}`);
+  }
   ctx.store?.(value);
 }
 
@@ -96,4 +99,64 @@ export function h_storeb(vm: any, [arrayAddr, byteIndex, value]: number[]) {
   }
 
   vm.memory.writeUInt8(value, addr);
+}
+
+export function h_scan_table(
+  vm: any,
+  operands: number[],
+  ctx: { store?: (v: number) => void; branch?: (cond: boolean) => void },
+) {
+  if (!vm.memory) {
+    console.error("Memory not loaded");
+    ctx.store?.(0);
+    ctx.branch?.(false);
+    return;
+  }
+
+  const x = operands[0]; // value to search for
+  const table = operands[1]; // table address
+  const len = operands[2]; // number of entries
+  const form = operands.length > 3 ? operands[3] : 0x82; // default form
+
+  // Parse form byte
+  const fieldSize = form & 0x7f; // bits 0-6: size of each entry in bytes
+  const isWord = (form & 0x80) !== 0; // bit 7: 1=word entries, 0=byte entries
+
+  // Search the table
+  let foundAddr = 0;
+  for (let i = 0; i < len; i++) {
+    const entryAddr = table + i * fieldSize;
+
+    if (entryAddr < 0 || entryAddr >= vm.memory.length) {
+      console.error(
+        `SCAN_TABLE: Invalid table entry address 0x${entryAddr.toString(16)}`
+      );
+      break;
+    }
+
+    let entryValue: number;
+    if (isWord) {
+      // Read word (2 bytes)
+      if (entryAddr >= vm.memory.length - 1) {
+        console.error(
+          `SCAN_TABLE: Invalid word read at 0x${entryAddr.toString(16)}`
+        );
+        break;
+      }
+      entryValue = vm.memory.readUInt16BE(entryAddr);
+    } else {
+      // Read byte
+      entryValue = vm.memory.readUInt8(entryAddr);
+    }
+
+    if (entryValue === x) {
+      foundAddr = entryAddr;
+      break;
+    }
+  }
+
+  // Store the result (address where found, or 0 if not found)
+  ctx.store?.(foundAddr);
+  // Branch if found
+  ctx.branch?.(foundAddr !== 0);
 }

@@ -22,7 +22,7 @@ function h_get_sibling(vm, [objectId], ctx) {
         siblingValue = vm.memory.readUInt8(objectAddress + 5);
     }
     else {
-        siblingValue = vm.memory.readUInt16BE(objectAddress + 9);
+        siblingValue = vm.memory.readUInt16BE(objectAddress + 8);
     }
     ctx.store?.(siblingValue);
     ctx.branch?.(siblingValue !== 0);
@@ -95,7 +95,7 @@ function h_remove_obj(vm, [objectId]) {
             vm.memory.writeUInt8(objSiblingId, parentAddress + 6);
         }
         else {
-            objSiblingId = vm.memory.readUInt16BE(objAddress + 9);
+            objSiblingId = vm.memory.readUInt16BE(objAddress + 8);
             vm.memory.writeUInt16BE(objSiblingId, parentAddress + 10);
         }
     }
@@ -109,7 +109,7 @@ function h_remove_obj(vm, [objectId]) {
                 currentChildSiblingId = vm.memory.readUInt8(currentChildAddress + 5);
             }
             else {
-                currentChildSiblingId = vm.memory.readUInt16BE(currentChildAddress + 9);
+                currentChildSiblingId = vm.memory.readUInt16BE(currentChildAddress + 8);
             }
             if (currentChildSiblingId === objectId) {
                 let objSiblingId;
@@ -118,8 +118,8 @@ function h_remove_obj(vm, [objectId]) {
                     vm.memory.writeUInt8(objSiblingId, currentChildAddress + 5);
                 }
                 else {
-                    objSiblingId = vm.memory.readUInt16BE(objAddress + 9);
-                    vm.memory.writeUInt16BE(objSiblingId, currentChildAddress + 9);
+                    objSiblingId = vm.memory.readUInt16BE(objAddress + 8);
+                    vm.memory.writeUInt16BE(objSiblingId, currentChildAddress + 8);
                 }
                 break;
             }
@@ -133,7 +133,7 @@ function h_remove_obj(vm, [objectId]) {
     }
     else {
         vm.memory.writeUInt16BE(0, objAddress + 6);
-        vm.memory.writeUInt16BE(0, objAddress + 9);
+        vm.memory.writeUInt16BE(0, objAddress + 8);
     }
 }
 function h_print_obj(vm, [objectId]) {

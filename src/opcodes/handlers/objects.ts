@@ -16,7 +16,7 @@ export function h_get_sibling(
   if (vm.header.version <= 3) {
     siblingValue = vm.memory.readUInt8(objectAddress + 5);
   } else {
-    siblingValue = vm.memory.readUInt16BE(objectAddress + 9);
+    siblingValue = vm.memory.readUInt16BE(objectAddress + 8);
   }
 
   ctx.store?.(siblingValue);
@@ -109,7 +109,7 @@ export function h_remove_obj(vm: any, [objectId]: number[]) {
       objSiblingId = vm.memory.readUInt8(objAddress + 5);
       vm.memory.writeUInt8(objSiblingId, parentAddress + 6);
     } else {
-      objSiblingId = vm.memory.readUInt16BE(objAddress + 9);
+      objSiblingId = vm.memory.readUInt16BE(objAddress + 8);
       vm.memory.writeUInt16BE(objSiblingId, parentAddress + 10);
     }
   } else {
@@ -122,7 +122,7 @@ export function h_remove_obj(vm: any, [objectId]: number[]) {
       if (vm.header.version <= 3) {
         currentChildSiblingId = vm.memory.readUInt8(currentChildAddress + 5);
       } else {
-        currentChildSiblingId = vm.memory.readUInt16BE(currentChildAddress + 9);
+        currentChildSiblingId = vm.memory.readUInt16BE(currentChildAddress + 8);
       }
 
       if (currentChildSiblingId === objectId) {
@@ -131,8 +131,8 @@ export function h_remove_obj(vm: any, [objectId]: number[]) {
           objSiblingId = vm.memory.readUInt8(objAddress + 5);
           vm.memory.writeUInt8(objSiblingId, currentChildAddress + 5);
         } else {
-          objSiblingId = vm.memory.readUInt16BE(objAddress + 9);
-          vm.memory.writeUInt16BE(objSiblingId, currentChildAddress + 9);
+          objSiblingId = vm.memory.readUInt16BE(objAddress + 8);
+          vm.memory.writeUInt16BE(objSiblingId, currentChildAddress + 8);
         }
         break;
       }
@@ -147,7 +147,7 @@ export function h_remove_obj(vm: any, [objectId]: number[]) {
     vm.memory.writeUInt8(0, objAddress + 5);
   } else {
     vm.memory.writeUInt16BE(0, objAddress + 6);
-    vm.memory.writeUInt16BE(0, objAddress + 9);
+    vm.memory.writeUInt16BE(0, objAddress + 8);
   }
 }
 

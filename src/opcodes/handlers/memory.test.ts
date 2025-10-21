@@ -1,4 +1,10 @@
-import { h_loadw, h_loadb, h_storew, h_storeb } from "./memory";
+import {
+  h_loadw,
+  h_loadb,
+  h_storew,
+  h_storeb,
+  h_scan_table,
+} from "./memory";
 
 describe("Memory Handlers", () => {
   describe("h_loadw", () => {
@@ -415,6 +421,237 @@ describe("Memory Handlers", () => {
       h_storeb(vm, [0x100, 1, 0x00]); // Store 0 at second byte
       expect(memory.readUInt8(0x100)).toBe(0xff); // First byte unchanged
       expect(memory.readUInt8(0x101)).toBe(0x00); // Second byte changed
+    });
+  });
+
+  describe("h_scan_table", () => {
+    it("should find word in table with default form (0x82)", () => {
+      const memory = Buffer.alloc(1024);
+      // Create a table with 4 word entries at 0x100
+      memory.writeUInt16BE(0x1111, 0x100);
+      memory.writeUInt16BE(0x2222, 0x102);
+      memory.writeUInt16BE(0x3333, 0x104);
+      memory.writeUInt16BE(0x4444, 0x106);
+
+      const storeFn = jest.fn();
+      const branchFn = jest.fn();
+      const vm = { memory };
+
+      // Search for 0x3333 in table at 0x100, 4 entries, default form
+      h_scan_table(vm, [0x3333, 0x100, 4], {
+        store: storeFn,
+        branch: branchFn,
+      });
+
+      expect(storeFn).toHaveBeenCalledWith(0x104); // Found at third entry
+      expect(branchFn).toHaveBeenCalledWith(true);
+    });
+
+    it("should find word in table with explicit form 0x82", () => {
+      const memory = Buffer.alloc(1024);
+      memory.writeUInt16BE(0xabcd, 0x100);
+      memory.writeUInt16BE(0xef01, 0x102);
+
+      const storeFn = jest.fn();
+      const branchFn = jest.fn();
+      const vm = { memory };
+
+      h_scan_table(vm, [0xabcd, 0x100, 2, 0x82], {
+        store: storeFn,
+        branch: branchFn,
+      });
+
+      expect(storeFn).toHaveBeenCalledWith(0x100); // Found at first entry
+      expect(branchFn).toHaveBeenCalledWith(true);
+    });
+
+    it("should find byte in table with form 0x01", () => {
+      const memory = Buffer.alloc(1024);
+      // Create a table with 4 byte entries at 0x100
+      memory.writeUInt8(0x11, 0x100);
+      memory.writeUInt8(0x22, 0x101);
+      memory.writeUInt8(0x33, 0x102);
+      memory.writeUInt8(0x44, 0x103);
+
+      const storeFn = jest.fn();
+      const branchFn = jest.fn();
+      const vm = { memory };
+
+      // Search for 0x22 in table, form 0x01 (byte array, 1 byte per entry)
+      h_scan_table(vm, [0x22, 0x100, 4, 0x01], {
+        store: storeFn,
+        branch: branchFn,
+      });
+
+      expect(storeFn).toHaveBeenCalledWith(0x101); // Found at second entry
+      expect(branchFn).toHaveBeenCalledWith(true);
+    });
+
+    it("should handle word array with larger entries (form 0x84)", () => {
+      const memory = Buffer.alloc(1024);
+      // Create a table with 4-byte entries, each starting with a word
+      memory.writeUInt16BE(0x1111, 0x100);
+      memory.writeUInt16BE(0xaaaa, 0x102); // Extra data
+      memory.writeUInt16BE(0x2222, 0x104);
+      memory.writeUInt16BE(0xbbbb, 0x106); // Extra data
+      memory.writeUInt16BE(0x3333, 0x108);
+      memory.writeUInt16BE(0xcccc, 0x10a); // Extra data
+
+      const storeFn = jest.fn();
+      const branchFn = jest.fn();
+      const vm = { memory };
+
+      // Form 0x84 = bit 7 set (words), bits 0-6 = 4 (4 bytes per entry)
+      h_scan_table(vm, [0x2222, 0x100, 3, 0x84], {
+        store: storeFn,
+        branch: branchFn,
+      });
+
+      expect(storeFn).toHaveBeenCalledWith(0x104); // Found at second entry
+      expect(branchFn).toHaveBeenCalledWith(true);
+    });
+
+    it("should return 0 when value not found", () => {
+      const memory = Buffer.alloc(1024);
+      memory.writeUInt16BE(0x1111, 0x100);
+      memory.writeUInt16BE(0x2222, 0x102);
+
+      const storeFn = jest.fn();
+      const branchFn = jest.fn();
+      const vm = { memory };
+
+      h_scan_table(vm, [0x9999, 0x100, 2], {
+        store: storeFn,
+        branch: branchFn,
+      });
+
+      expect(storeFn).toHaveBeenCalledWith(0);
+      expect(branchFn).toHaveBeenCalledWith(false);
+    });
+
+    it("should find first occurrence when value appears multiple times", () => {
+      const memory = Buffer.alloc(1024);
+      memory.writeUInt16BE(0x1111, 0x100);
+      memory.writeUInt16BE(0x2222, 0x102);
+      memory.writeUInt16BE(0x2222, 0x104); // Duplicate
+      memory.writeUInt16BE(0x3333, 0x106);
+
+      const storeFn = jest.fn();
+      const branchFn = jest.fn();
+      const vm = { memory };
+
+      h_scan_table(vm, [0x2222, 0x100, 4], {
+        store: storeFn,
+        branch: branchFn,
+      });
+
+      expect(storeFn).toHaveBeenCalledWith(0x102); // First occurrence
+      expect(branchFn).toHaveBeenCalledWith(true);
+    });
+
+    it("should find value at first entry with 7-byte entries (debug)", () => {
+      const memory = Buffer.alloc(1024);
+      // Create first entry with value 0x5678
+      memory.writeUInt16BE(0x5678, 0x100);
+      memory.writeUInt8(0, 0x102);
+      memory.writeUInt8(0, 0x103);
+      memory.writeUInt8(0, 0x104);
+      memory.writeUInt8(0, 0x105);
+      memory.writeUInt8(0, 0x106);
+
+      const storeFn = jest.fn();
+      const branchFn = jest.fn();
+      const vm = { memory };
+
+      // Form 0x87 = bit 7 set (words), bits 0-6 = 7 (7 bytes per entry)
+      h_scan_table(vm, [0x5678, 0x100, 1, 0x87], {
+        store: storeFn,
+        branch: branchFn,
+      });
+
+      expect(storeFn).toHaveBeenCalledWith(0x100); // Found at first entry
+      expect(branchFn).toHaveBeenCalledWith(true);
+    });
+
+    it("should handle dictionary-like table with 7-byte entries", () => {
+      const memory = Buffer.alloc(1024);
+      // Simulate dictionary with 7-byte entries (common in Z-machine)
+      // Entry 1: word 0x1234, plus 5 bytes of data
+      memory.writeUInt16BE(0x1234, 0x100);
+      memory.writeUInt8(0xaa, 0x102);
+      memory.writeUInt8(0xbb, 0x103);
+      memory.writeUInt8(0xcc, 0x104);
+      memory.writeUInt8(0xdd, 0x105);
+      memory.writeUInt8(0xee, 0x106);
+      // Entry 2: word 0x5678, plus 5 bytes of data
+      memory.writeUInt16BE(0x5678, 0x107);
+      memory.writeUInt8(0x11, 0x109);
+      memory.writeUInt8(0x22, 0x10a);
+      memory.writeUInt8(0x33, 0x10b);
+      memory.writeUInt8(0x44, 0x10c);
+      memory.writeUInt8(0x55, 0x10d);
+
+      const storeFn = jest.fn();
+      const branchFn = jest.fn();
+      const vm = { memory };
+
+      // Form 0x87 = bit 7 set (words), bits 0-6 = 7 (7 bytes per entry)
+      h_scan_table(vm, [0x5678, 0x100, 2, 0x87], {
+        store: storeFn,
+        branch: branchFn,
+      });
+
+      expect(storeFn).toHaveBeenCalledWith(0x107); // Found at second entry
+      expect(branchFn).toHaveBeenCalledWith(true);
+    });
+
+    it("should work without store function", () => {
+      const memory = Buffer.alloc(1024);
+      memory.writeUInt16BE(0x1234, 0x100);
+      const vm = { memory };
+
+      expect(() => h_scan_table(vm, [0x1234, 0x100, 1], {})).not.toThrow();
+    });
+
+    it("should work without branch function", () => {
+      const memory = Buffer.alloc(1024);
+      memory.writeUInt16BE(0x1234, 0x100);
+      const vm = { memory };
+
+      expect(() => h_scan_table(vm, [0x1234, 0x100, 1], {})).not.toThrow();
+    });
+
+    it("should handle empty table (len = 0)", () => {
+      const memory = Buffer.alloc(1024);
+      const storeFn = jest.fn();
+      const branchFn = jest.fn();
+      const vm = { memory };
+
+      h_scan_table(vm, [0x1234, 0x100, 0], {
+        store: storeFn,
+        branch: branchFn,
+      });
+
+      expect(storeFn).toHaveBeenCalledWith(0);
+      expect(branchFn).toHaveBeenCalledWith(false);
+    });
+
+    it("should log error when memory not loaded", () => {
+      const consoleSpy = jest.spyOn(console, "error").mockImplementation();
+      const storeFn = jest.fn();
+      const branchFn = jest.fn();
+      const vm = {};
+
+      h_scan_table(vm, [0x1234, 0x100, 1], {
+        store: storeFn,
+        branch: branchFn,
+      });
+
+      expect(consoleSpy).toHaveBeenCalledWith("Memory not loaded");
+      expect(storeFn).toHaveBeenCalledWith(0);
+      expect(branchFn).toHaveBeenCalledWith(false);
+
+      consoleSpy.mockRestore();
     });
   });
 });

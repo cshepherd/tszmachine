@@ -40,15 +40,17 @@ function encodeWord(vm: any, chars: number[]): [number, number, number] {
     }
   }
 
-  // In v3, dictionary entries are typically 6 z-chars (2 words)
-  // Pad to 6 z-characters with 5s
-  while (zchars.length < 6) {
+  // V1-3: 6 z-chars (2 words), V4+: 9 z-chars (3 words)
+  const targetLength = vm.header.version <= 3 ? 6 : 9;
+
+  // Pad with 5s
+  while (zchars.length < targetLength) {
     zchars.push(5);
   }
 
-  // Truncate to 6 for v3 (some games use 9 for v4+)
-  if (zchars.length > 6) {
-    zchars.length = 6;
+  // Truncate if needed
+  if (zchars.length > targetLength) {
+    zchars.length = targetLength;
   }
 
   if (vm.trace) {
@@ -56,20 +58,29 @@ function encodeWord(vm: any, chars: number[]): [number, number, number] {
     console.log(`  encodeWord("${wordStr}"): zchars=[${zchars.join(",")}]`);
   }
 
-  // Pack into 2 words for v3 (6 z-chars)
+  // Pack into words (3 z-chars per word)
   const word1 = (zchars[0] << 10) | (zchars[1] << 5) | zchars[2];
   const word2 = (zchars[3] << 10) | (zchars[4] << 5) | zchars[5];
+  const word3 = (zchars[6] << 10) | (zchars[7] << 5) | zchars[8];
 
-  // Set high bit on the second word to mark end
-  const finalWord2 = word2 | 0x8000;
-
-  if (vm.trace) {
-    console.log(
-      `  encoded as: ${word1.toString(16).padStart(4, "0")} ${finalWord2.toString(16).padStart(4, "0")} 0000`,
-    );
+  // Set high bit on the last word to mark end
+  if (vm.header.version <= 3) {
+    const finalWord2 = word2 | 0x8000;
+    if (vm.trace) {
+      console.log(
+        `  encoded as: ${word1.toString(16).padStart(4, "0")} ${finalWord2.toString(16).padStart(4, "0")} 0000`,
+      );
+    }
+    return [word1, finalWord2, 0];
+  } else {
+    const finalWord3 = word3 | 0x8000;
+    if (vm.trace) {
+      console.log(
+        `  encoded as: ${word1.toString(16).padStart(4, "0")} ${word2.toString(16).padStart(4, "0")} ${finalWord3.toString(16).padStart(4, "0")}`,
+      );
+    }
+    return [word1, word2, finalWord3];
   }
-
-  return [word1, finalWord2, 0];
 }
 
 function tokenize(vm: any, textBufferAddr: number, parseBufferAddr: number) {
@@ -194,6 +205,10 @@ function tokenize(vm: any, textBufferAddr: number, parseBufferAddr: number) {
   const actualTokens = Math.min(tokens.length, maxTokens);
   vm.memory.writeUInt8(actualTokens, parseBufferAddr + 1);
 
+  if (vm.trace) {
+    console.log(`@tokenize: Writing ${actualTokens} tokens to parse buffer at 0x${parseBufferAddr.toString(16)}`);
+  }
+
   // Write each token entry
   for (let i = 0; i < actualTokens; i++) {
     const token = tokens[i];
@@ -202,18 +217,27 @@ function tokenize(vm: any, textBufferAddr: number, parseBufferAddr: number) {
     const encodedWord = encodeWord(vm, token.word);
 
     // Look up in dictionary
-    // In v3 dictionaries, only compare the encoded words (not the metadata in unused words)
-    // The encoded word ends at the word with the high bit set
+    // Compare the encoded words (not the metadata bytes)
+    // V1-3: 2 words (4 bytes), V4+: 3 words (6 bytes)
     let dictAddr = 0;
     for (let j = 0; j < numEntries; j++) {
       const entryAddr = firstEntryAddr + j * entryLength;
       const entry1 = vm.memory.readUInt16BE(entryAddr);
       const entry2 = vm.memory.readUInt16BE(entryAddr + 2);
 
-      // In v3, always compare 2 words (dictionary entries are fixed at 2 words)
-      if (entry1 === encodedWord[0] && entry2 === encodedWord[1]) {
-        dictAddr = entryAddr;
-        break;
+      // V1-3: compare 2 words, V4+: compare 3 words
+      if (vm.header.version <= 3) {
+        if (entry1 === encodedWord[0] && entry2 === encodedWord[1]) {
+          dictAddr = entryAddr;
+          break;
+        }
+      } else {
+        // V4+: compare all 3 words
+        const entry3 = vm.memory.readUInt16BE(entryAddr + 4);
+        if (entry1 === encodedWord[0] && entry2 === encodedWord[1] && entry3 === encodedWord[2]) {
+          dictAddr = entryAddr;
+          break;
+        }
       }
     }
 
@@ -232,6 +256,10 @@ function tokenize(vm: any, textBufferAddr: number, parseBufferAddr: number) {
     vm.memory.writeUInt16BE(dictAddr, tokenEntryAddr);
     vm.memory.writeUInt8(token.length, tokenEntryAddr + 2);
     vm.memory.writeUInt8(token.start + 1, tokenEntryAddr + 3); // Position is 1-indexed
+
+    if (vm.trace) {
+      console.log(`  Token ${i}: addr=0x${dictAddr.toString(16)}, len=${token.length}, pos=${token.start + 1}, written to 0x${tokenEntryAddr.toString(16)}`);
+    }
   }
 }
 

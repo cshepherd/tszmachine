@@ -51,7 +51,13 @@ import {
   h_dec_chk,
 } from "./handlers/variables";
 import { h_call, h_call_1s, h_call_2s } from "./handlers/call";
-import { h_loadw, h_loadb, h_storew, h_storeb } from "./handlers/memory";
+import {
+  h_loadw,
+  h_loadb,
+  h_storew,
+  h_storeb,
+  h_scan_table,
+} from "./handlers/memory";
 import {
   h_print_char,
   h_sread,
@@ -604,7 +610,13 @@ TABLE_VAR[0xf6] = dv(0xf6, {
   handler: async (vm, ops, ctx) => await h_read_char(vm, ops, ctx),
 });
 
-// TABLE_VAR[0xf7] = scan_table (v4+) - TODO: implement h_scan_table
+TABLE_VAR[0xf7] = dv(0xf7, {
+  name: "scan_table",
+  minVersion: 4,
+  doesStore: true,
+  doesBranch: true,
+  handler: (vm, ops, ctx) => h_scan_table(vm, ops, ctx),
+});
 
 TABLE_VAR[0xf8] = dv(0xf8, {
   name: "not",
