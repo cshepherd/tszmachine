@@ -958,6 +958,26 @@ class ZMachine {
   private getObjectAddress(objectId: number): number {
     if (!this.header) throw new Error("Header not loaded");
 
+    // Validate object ID first
+    const propertyDefaultSize = this.getPropertyDefaultSize();
+    const objectEntrySize = this.getObjectEntrySize();
+    const objectTableStart = this.header.objectTableAddress + propertyDefaultSize;
+    const staticMemStart = this.header.staticMemoryAddress;
+    const maxObjects = Math.floor((staticMemStart - objectTableStart) / objectEntrySize);
+
+    if (objectId < 0 || objectId > maxObjects || objectId > 2000) {
+      // Instead of throwing, return the address for object 0 (which is always valid)
+      // This makes the interpreter more robust against game bugs
+      if (this.trace) {
+        console.log(
+          `getObjectAddress: Invalid object ID ${objectId} (0x${objectId.toString(16)}), ` +
+          `returning object 0 address. Valid range: 1-${maxObjects}.`
+        );
+      }
+      // Return address for object table start (treating as object 0)
+      return objectTableStart;
+    }
+
     // Defensive check: object table address should be reasonable
     // For most games, it's in the first 64KB and typically < 10000
     if (this.header.objectTableAddress < 0 || this.header.objectTableAddress > 65535) {
@@ -977,9 +997,6 @@ class ZMachine {
         this.header.objectTableAddress = memoryTableAddr;
       }
     }
-
-    const propertyDefaultSize = this.getPropertyDefaultSize();
-    const objectEntrySize = this.getObjectEntrySize();
     const address =
       this.header.objectTableAddress +
       propertyDefaultSize +
@@ -999,8 +1016,20 @@ class ZMachine {
   private getObjectName(objectId: number): string {
     if (!this.memory || !this.header) return "";
 
+    // Validate object ID before trying to get its address
+    if (objectId === 0) return "";
+
+    const propertyDefaultSize = this.getPropertyDefaultSize();
+    const objectEntrySize = this.getObjectEntrySize();
+    const objectTableStart = this.header.objectTableAddress + propertyDefaultSize;
+    const staticMemStart = this.header.staticMemoryAddress;
+    const maxObjects = Math.floor((staticMemStart - objectTableStart) / objectEntrySize);
+
+    if (objectId < 0 || objectId > maxObjects || objectId > 2000) {
+      return "";
+    }
+
     const objectAddress = this.getObjectAddress(objectId);
-    const objectEntrySize = this.header.version <= 3 ? 9 : 14;
     const propertyTableAddr = this.memory.readUInt16BE(
       objectAddress + objectEntrySize - 2,
     );

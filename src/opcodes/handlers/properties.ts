@@ -1,4 +1,5 @@
 // Property manipulation handlers
+import { isValidObjectId } from "./objects";
 
 export function h_get_prop_len(
   vm: any,
@@ -40,6 +41,11 @@ export function h_get_prop(
 ) {
   if (!vm.memory || !vm.header) {
     console.error("Memory or header not loaded");
+    return;
+  }
+
+  if (!isValidObjectId(vm, objectId)) {
+    ctx.store?.(0);
     return;
   }
 
@@ -113,6 +119,11 @@ export function h_get_prop_addr(
     return;
   }
 
+  if (!isValidObjectId(vm, objectId)) {
+    ctx.store?.(0);
+    return;
+  }
+
   const objectAddress = vm.getObjectAddress(objectId);
   const objectEntrySize = vm.header.version <= 3 ? 9 : 14;
   const propertyTableAddr = vm.memory.readUInt16BE(
@@ -167,6 +178,11 @@ export function h_get_next_prop(
 ) {
   if (!vm.memory || !vm.header) {
     console.error("Memory or header not loaded");
+    return;
+  }
+
+  if (!isValidObjectId(vm, objectId)) {
+    ctx.store?.(0);
     return;
   }
 
@@ -255,6 +271,10 @@ export function h_get_next_prop(
 export function h_put_prop(vm: any, [objectId, propNum, value]: number[]) {
   if (!vm.memory || !vm.header) {
     console.error("Memory or header not loaded");
+    return;
+  }
+
+  if (!isValidObjectId(vm, objectId)) {
     return;
   }
 
