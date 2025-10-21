@@ -509,11 +509,56 @@ export function h_buffer_mode(vm: any, [flag]: number[]) {
 
 export function h_output_stream(vm: any, [number, table]: number[]) {
   // Select output stream (v3+)
-  // Currently no-op
+  // Stream 1: Screen
+  // Stream 2: Transcript (not implemented)
+  // Stream 3: Memory table
+  // Stream 4: Commands (not implemented)
+  // Positive number = enable, negative = disable
+
   if (vm.trace) {
     console.log(
-      `@output_stream ${number}${table !== undefined ? `,${table}` : ""} (no-op)`,
+      `@output_stream ${number}${table !== undefined ? `,${table}` : ""}`,
     );
+  }
+
+  // Convert to signed 16-bit
+  const signedNumber = number > 32767 ? number - 65536 : number;
+
+  if (signedNumber === 3 && table !== undefined) {
+    // Enable memory stream 3
+    if (!vm.outputStreams) {
+      vm.outputStreams = { stream3: null };
+    }
+    vm.outputStreams.stream3 = {
+      table,
+      buffer: [],
+    };
+    if (vm.trace) {
+      console.log(`  Stream 3 enabled, writing to table at 0x${table.toString(16)}`);
+    }
+  } else if (signedNumber === -3) {
+    // Disable memory stream 3
+    if (vm.outputStreams && vm.outputStreams.stream3) {
+      const stream = vm.outputStreams.stream3;
+      const tableAddr = stream.table;
+      const text = stream.buffer.join('');
+
+      if (vm.memory) {
+        // Write word count (number of characters)
+        vm.memory.writeUInt16BE(text.length, tableAddr);
+
+        // Write text bytes
+        for (let i = 0; i < text.length; i++) {
+          vm.memory.writeUInt8(text.charCodeAt(i), tableAddr + 2 + i);
+        }
+      }
+
+      if (vm.trace) {
+        console.log(`  Stream 3 disabled, wrote ${text.length} chars: "${text}"`);
+      }
+
+      vm.outputStreams.stream3 = null;
+    }
   }
 }
 

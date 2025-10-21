@@ -901,11 +901,22 @@ class ZMachine {
     }
     print(abbreviations = true) {
         let fullString = this.decodeZSCII(abbreviations);
-        if (this.inputOutputDevice) {
-            this.inputOutputDevice.writeString(fullString);
+        // Check if output stream 3 (memory) is active
+        if (this.outputStreams && this.outputStreams.stream3) {
+            // Redirect to memory stream instead of screen
+            this.outputStreams.stream3.buffer.push(fullString);
+            if (this.trace) {
+                console.log(`  [Stream 3: buffered "${fullString}"]`);
+            }
         }
         else {
-            console.log(fullString);
+            // Normal output to screen
+            if (this.inputOutputDevice) {
+                this.inputOutputDevice.writeString(fullString);
+            }
+            else {
+                console.log(fullString);
+            }
         }
     }
     // --- Helpers used by the decoder ---
