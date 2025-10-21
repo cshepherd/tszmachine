@@ -74,13 +74,12 @@ function h_show_status(vm) {
         }
         rightText = `Score: ${score}  Moves: ${turns}`;
     }
-    // Build status line with padding
-    // Use termWidth - 1 to avoid wrapping at column 80
+    // Build status line with padding to fill the entire width
     const leftText = " " + locationName;
-    const padding = termWidth - leftText.length - rightText.length - 1;
+    const padding = termWidth - leftText.length - rightText.length;
     const statusLine = leftText + " ".repeat(Math.max(0, padding)) + rightText;
-    // Truncate if too long, ensure we don't reach the last column to avoid wrap
-    const finalStatusLine = statusLine.slice(0, termWidth - 1);
+    // Truncate if too long (shouldn't happen, but safety check)
+    const finalStatusLine = statusLine.slice(0, termWidth);
     // Update status line on line 1
     // Save cursor, update status line, then restore cursor to preserve current position
     // Build the complete status line update sequence
