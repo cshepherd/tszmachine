@@ -522,9 +522,65 @@ export function h_get_cursor(vm: any, [array]: number[]) {
 
 export function h_set_text_style(vm: any, [style]: number[]) {
   // Set text style (v4+)
-  // Currently no-op
+  // Bit 0 (1): Reverse video
+  // Bit 1 (2): Bold
+  // Bit 2 (4): Italic
+  // Bit 3 (8): Fixed-pitch font
+  // Style 0: Turn off all styles
+
   if (vm.trace) {
-    console.log(`@set_text_style ${style} (no-op)`);
+    console.log(`@set_text_style ${style}`);
+  }
+
+  if (!vm.inputOutputDevice) {
+    return;
+  }
+
+  // Track current text style on VM
+  if (vm.currentTextStyle === undefined) {
+    vm.currentTextStyle = 0;
+  }
+
+  // If style is 0, reset all styles
+  if (style === 0) {
+    if (vm.currentTextStyle !== 0) {
+      vm.inputOutputDevice.writeString("\x1b[0m");
+      vm.currentTextStyle = 0;
+    }
+    return;
+  }
+
+  // Build VT100 sequence for the requested styles
+  let sequence = "";
+
+  // Check which styles changed
+  const newStyles = style;
+  const oldStyles = vm.currentTextStyle;
+
+  // If switching between styles, reset first
+  if (oldStyles !== 0 && oldStyles !== newStyles) {
+    sequence += "\x1b[0m";
+  }
+
+  // Apply new styles
+  if (newStyles & 1) {
+    // Reverse video
+    sequence += "\x1b[7m";
+  }
+  if (newStyles & 2) {
+    // Bold
+    sequence += "\x1b[1m";
+  }
+  if (newStyles & 4) {
+    // Italic
+    sequence += "\x1b[3m";
+  }
+  // Note: We don't have a VT100 code for fixed-pitch vs proportional
+  // Most terminals are fixed-pitch anyway
+
+  if (sequence) {
+    vm.inputOutputDevice.writeString(sequence);
+    vm.currentTextStyle = newStyles;
   }
 }
 
