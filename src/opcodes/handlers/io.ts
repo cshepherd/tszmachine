@@ -313,6 +313,8 @@ export async function h_sread(vm: any, operands: number[]) {
     const scrollTop = (vm.splitWindowLines || 0) + 1;
     // Move to start of lower window and clear from cursor to end of screen
     vm.inputOutputDevice.writeString(`\x1b[${scrollTop};1H\x1b[J`);
+    // Reset cursor column tracker for word wrapping
+    vm.cursorColumn = 0;
   }
 
   if (vm.trace) {
@@ -439,12 +441,16 @@ export function h_set_window(vm: any, [window]: number[]) {
     if (window === 1) {
       // Upper window (status) - position cursor at top
       vm.inputOutputDevice.writeString("\x1b[1;1H");
+      // Reset cursor column for word wrapping
+      vm.cursorColumn = 0;
     } else {
       // Lower window (main scrolling area) - position after status lines
       const scrollTop = (vm.splitWindowLines || 0) + 1;
       // For v3 games with no split, position at line 1 (scrolling region is 1-23)
       const line = vm.splitWindowLines === 0 ? 1 : scrollTop;
       vm.inputOutputDevice.writeString(`\x1b[${line};1H`);
+      // Reset cursor column for word wrapping
+      vm.cursorColumn = 0;
     }
   }
 }
@@ -463,9 +469,13 @@ export function h_erase_window(vm: any, [window]: number[]) {
     if (signedWindow === -1 || signedWindow === 2) {
       // Clear entire screen: ESC[2J and move cursor to home: ESC[H
       vm.inputOutputDevice.writeString("\x1b[2J\x1b[H");
+      // Reset cursor column for word wrapping
+      vm.cursorColumn = 0;
     } else if (signedWindow === 0) {
       // Clear lower window - for now just clear from cursor to end of screen
       vm.inputOutputDevice.writeString("\x1b[J");
+      // Reset cursor column for word wrapping
+      vm.cursorColumn = 0;
     } else if (signedWindow === 1) {
       // Clear upper window - more complex in a split screen setup
       // For now, just clear from cursor to end of line
@@ -492,6 +502,8 @@ export function h_set_cursor(vm: any, [line, column]: number[]) {
   if (vm.inputOutputDevice) {
     const vt100Sequence = `\x1b[${line};${column}H`;
     vm.inputOutputDevice.writeString(vt100Sequence);
+    // Update cursor column for word wrapping (column is 1-indexed, convert to 0-indexed)
+    vm.cursorColumn = column - 1;
   }
 }
 

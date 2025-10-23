@@ -61,6 +61,7 @@ declare class ZMachine {
         name: string;
     } | null;
     print(abbreviations?: boolean): void;
+    wrapText(text: string): string;
     _fetchByte(): number;
     _fetchWord(): number;
     _decodeOperand(kind: "large" | "small" | "var"): number;

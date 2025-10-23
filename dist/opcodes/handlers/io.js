@@ -322,6 +322,8 @@ async function h_sread(vm, operands) {
         const scrollTop = (vm.splitWindowLines || 0) + 1;
         // Move to start of lower window and clear from cursor to end of screen
         vm.inputOutputDevice.writeString(`\x1b[${scrollTop};1H\x1b[J`);
+        // Reset cursor column tracker for word wrapping
+        vm.cursorColumn = 0;
     }
     if (vm.trace) {
         console.log(`@sread: textBufferAddr=0x${textBufferAddr.toString(16)}, parseBufferAddr=0x${parseBufferAddr.toString(16)}, input="${input}"`);
@@ -431,6 +433,8 @@ function h_set_window(vm, [window]) {
         if (window === 1) {
             // Upper window (status) - position cursor at top
             vm.inputOutputDevice.writeString("\x1b[1;1H");
+            // Reset cursor column for word wrapping
+            vm.cursorColumn = 0;
         }
         else {
             // Lower window (main scrolling area) - position after status lines
@@ -438,6 +442,8 @@ function h_set_window(vm, [window]) {
             // For v3 games with no split, position at line 1 (scrolling region is 1-23)
             const line = vm.splitWindowLines === 0 ? 1 : scrollTop;
             vm.inputOutputDevice.writeString(`\x1b[${line};1H`);
+            // Reset cursor column for word wrapping
+            vm.cursorColumn = 0;
         }
     }
 }
@@ -453,10 +459,14 @@ function h_erase_window(vm, [window]) {
         if (signedWindow === -1 || signedWindow === 2) {
             // Clear entire screen: ESC[2J and move cursor to home: ESC[H
             vm.inputOutputDevice.writeString("\x1b[2J\x1b[H");
+            // Reset cursor column for word wrapping
+            vm.cursorColumn = 0;
         }
         else if (signedWindow === 0) {
             // Clear lower window - for now just clear from cursor to end of screen
             vm.inputOutputDevice.writeString("\x1b[J");
+            // Reset cursor column for word wrapping
+            vm.cursorColumn = 0;
         }
         else if (signedWindow === 1) {
             // Clear upper window - more complex in a split screen setup
@@ -481,6 +491,8 @@ function h_set_cursor(vm, [line, column]) {
     if (vm.inputOutputDevice) {
         const vt100Sequence = `\x1b[${line};${column}H`;
         vm.inputOutputDevice.writeString(vt100Sequence);
+        // Update cursor column for word wrapping (column is 1-indexed, convert to 0-indexed)
+        vm.cursorColumn = column - 1;
     }
 }
 function h_get_cursor(vm, [array]) {

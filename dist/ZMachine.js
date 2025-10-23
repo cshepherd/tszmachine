@@ -910,14 +910,72 @@ class ZMachine {
             }
         }
         else {
-            // Normal output to screen
+            // Normal output to screen with word wrapping
             if (this.inputOutputDevice) {
-                this.inputOutputDevice.writeString(fullString);
+                const wrapped = this.wrapText(fullString);
+                this.inputOutputDevice.writeString(wrapped);
             }
             else {
                 console.log(fullString);
             }
         }
+    }
+    wrapText(text) {
+        // Don't wrap in upper window (status area) or if we don't know the width
+        const currentWindow = this.currentWindow;
+        if (currentWindow === 1) {
+            return text; // Upper window - don't wrap (status bar, etc.)
+        }
+        // Get terminal width
+        let termWidth = 80; // Default
+        if (this.inputOutputDevice?.cols) {
+            termWidth = this.inputOutputDevice.cols;
+        }
+        else if (typeof process !== 'undefined' && process.stdout?.columns) {
+            termWidth = process.stdout.columns;
+        }
+        // Initialize cursor column tracker if needed
+        if (this.cursorColumn === undefined) {
+            this.cursorColumn = 0;
+        }
+        let result = '';
+        let lineStart = 0; // Track start of current line in result
+        let col = this.cursorColumn;
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            // Handle newlines - reset column to 0
+            if (char === '\n') {
+                result += char;
+                col = 0;
+                lineStart = result.length;
+                continue;
+            }
+            // Check if we're at or past the width limit
+            if (col >= termWidth) {
+                // Would exceed - need to wrap before adding this character
+                // Find the last space on the current line to wrap at word boundary
+                const currentLine = result.substring(lineStart);
+                const lastSpaceInLine = currentLine.lastIndexOf(' ');
+                if (lastSpaceInLine >= 0) {
+                    // Found a space - replace it with newline
+                    const wrapPoint = lineStart + lastSpaceInLine;
+                    result = result.substring(0, wrapPoint) + '\n' + result.substring(wrapPoint + 1);
+                    lineStart = wrapPoint + 1;
+                    col = result.length - lineStart;
+                }
+                else {
+                    // No space found on this line - force wrap here
+                    result += '\n';
+                    col = 0;
+                    lineStart = result.length;
+                }
+            }
+            result += char;
+            col++;
+        }
+        // Update cursor column for next print call
+        this.cursorColumn = col;
+        return result;
     }
     // --- Helpers used by the decoder ---
     _fetchByte() {

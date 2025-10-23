@@ -101,6 +101,10 @@ export function h_show_status(vm: any) {
 
   // Use inputOutputDevice to write (works in both Node.js and React/xtermjs)
   vm.inputOutputDevice.writeString(statusLineSequence);
+
+  // Reset cursor column tracker since cursor was saved/restored
+  // The cursor is back where it was (start of line after prompt)
+  vm.cursorColumn = 0;
 }
 
 export function h_verify(

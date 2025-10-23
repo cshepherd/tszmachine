@@ -92,6 +92,9 @@ function h_show_status(vm) {
         "\x1b8"; // Restore cursor position
     // Use inputOutputDevice to write (works in both Node.js and React/xtermjs)
     vm.inputOutputDevice.writeString(statusLineSequence);
+    // Reset cursor column tracker since cursor was saved/restored
+    // The cursor is back where it was (start of line after prompt)
+    vm.cursorColumn = 0;
 }
 function h_verify(vm, _ops, ctx) {
     // Verify game file checksum
