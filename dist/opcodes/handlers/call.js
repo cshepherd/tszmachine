@@ -38,7 +38,8 @@ function h_call(vm, operands, ctx) {
         return;
     }
     if (vm.trace) {
-        console.log(`@call Calling routine at ${routineAddress.toString(16)} with ${operands.length - 1} args`);
+        const args = operands.slice(1);
+        console.log(`@call Calling routine at ${routineAddress.toString(16)} with ${operands.length - 1} args: ${args.map(a => `0x${a.toString(16)}`).join(', ')}`);
     }
     // Save return info on call stack
     vm.callStack.push(vm.pc);
@@ -69,9 +70,15 @@ function h_call(vm, operands, ctx) {
             newPC += 2;
             if (i < operands.length - 1) {
                 vm.localVariables[i] = operands[i + 1];
+                if (vm.trace) {
+                    console.log(`@call   Local ${i + 1} = arg ${i} = 0x${operands[i + 1].toString(16)}`);
+                }
             }
             else {
                 vm.localVariables[i] = initialValue;
+                if (vm.trace) {
+                    console.log(`@call   Local ${i + 1} = default = 0x${initialValue.toString(16)}`);
+                }
             }
         }
     }

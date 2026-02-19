@@ -40,15 +40,17 @@ function encodeWord(vm: any, chars: number[]): [number, number, number] {
     }
   }
 
-  // In v3, dictionary entries are typically 6 z-chars (2 words)
-  // Pad to 6 z-characters with 5s
-  while (zchars.length < 6) {
+  // V1-3: 6 z-chars (2 words), V4+: 9 z-chars (3 words)
+  const targetLength = vm.header.version <= 3 ? 6 : 9;
+
+  // Pad with 5s
+  while (zchars.length < targetLength) {
     zchars.push(5);
   }
 
-  // Truncate to 6 for v3 (some games use 9 for v4+)
-  if (zchars.length > 6) {
-    zchars.length = 6;
+  // Truncate if needed
+  if (zchars.length > targetLength) {
+    zchars.length = targetLength;
   }
 
   if (vm.trace) {
@@ -56,20 +58,29 @@ function encodeWord(vm: any, chars: number[]): [number, number, number] {
     console.log(`  encodeWord("${wordStr}"): zchars=[${zchars.join(",")}]`);
   }
 
-  // Pack into 2 words for v3 (6 z-chars)
+  // Pack into words (3 z-chars per word)
   const word1 = (zchars[0] << 10) | (zchars[1] << 5) | zchars[2];
   const word2 = (zchars[3] << 10) | (zchars[4] << 5) | zchars[5];
+  const word3 = (zchars[6] << 10) | (zchars[7] << 5) | zchars[8];
 
-  // Set high bit on the second word to mark end
-  const finalWord2 = word2 | 0x8000;
-
-  if (vm.trace) {
-    console.log(
-      `  encoded as: ${word1.toString(16).padStart(4, "0")} ${finalWord2.toString(16).padStart(4, "0")} 0000`,
-    );
+  // Set high bit on the last word to mark end
+  if (vm.header.version <= 3) {
+    const finalWord2 = word2 | 0x8000;
+    if (vm.trace) {
+      console.log(
+        `  encoded as: ${word1.toString(16).padStart(4, "0")} ${finalWord2.toString(16).padStart(4, "0")} 0000`,
+      );
+    }
+    return [word1, finalWord2, 0];
+  } else {
+    const finalWord3 = word3 | 0x8000;
+    if (vm.trace) {
+      console.log(
+        `  encoded as: ${word1.toString(16).padStart(4, "0")} ${word2.toString(16).padStart(4, "0")} ${finalWord3.toString(16).padStart(4, "0")}`,
+      );
+    }
+    return [word1, word2, finalWord3];
   }
-
-  return [word1, finalWord2, 0];
 }
 
 function tokenize(vm: any, textBufferAddr: number, parseBufferAddr: number) {
@@ -194,6 +205,10 @@ function tokenize(vm: any, textBufferAddr: number, parseBufferAddr: number) {
   const actualTokens = Math.min(tokens.length, maxTokens);
   vm.memory.writeUInt8(actualTokens, parseBufferAddr + 1);
 
+  if (vm.trace) {
+    console.log(`@tokenize: Writing ${actualTokens} tokens to parse buffer at 0x${parseBufferAddr.toString(16)}`);
+  }
+
   // Write each token entry
   for (let i = 0; i < actualTokens; i++) {
     const token = tokens[i];
@@ -202,18 +217,27 @@ function tokenize(vm: any, textBufferAddr: number, parseBufferAddr: number) {
     const encodedWord = encodeWord(vm, token.word);
 
     // Look up in dictionary
-    // In v3 dictionaries, only compare the encoded words (not the metadata in unused words)
-    // The encoded word ends at the word with the high bit set
+    // Compare the encoded words (not the metadata bytes)
+    // V1-3: 2 words (4 bytes), V4+: 3 words (6 bytes)
     let dictAddr = 0;
     for (let j = 0; j < numEntries; j++) {
       const entryAddr = firstEntryAddr + j * entryLength;
       const entry1 = vm.memory.readUInt16BE(entryAddr);
       const entry2 = vm.memory.readUInt16BE(entryAddr + 2);
 
-      // In v3, always compare 2 words (dictionary entries are fixed at 2 words)
-      if (entry1 === encodedWord[0] && entry2 === encodedWord[1]) {
-        dictAddr = entryAddr;
-        break;
+      // V1-3: compare 2 words, V4+: compare 3 words
+      if (vm.header.version <= 3) {
+        if (entry1 === encodedWord[0] && entry2 === encodedWord[1]) {
+          dictAddr = entryAddr;
+          break;
+        }
+      } else {
+        // V4+: compare all 3 words
+        const entry3 = vm.memory.readUInt16BE(entryAddr + 4);
+        if (entry1 === encodedWord[0] && entry2 === encodedWord[1] && entry3 === encodedWord[2]) {
+          dictAddr = entryAddr;
+          break;
+        }
       }
     }
 
@@ -232,6 +256,10 @@ function tokenize(vm: any, textBufferAddr: number, parseBufferAddr: number) {
     vm.memory.writeUInt16BE(dictAddr, tokenEntryAddr);
     vm.memory.writeUInt8(token.length, tokenEntryAddr + 2);
     vm.memory.writeUInt8(token.start + 1, tokenEntryAddr + 3); // Position is 1-indexed
+
+    if (vm.trace) {
+      console.log(`  Token ${i}: addr=0x${dictAddr.toString(16)}, len=${token.length}, pos=${token.start + 1}, written to 0x${tokenEntryAddr.toString(16)}`);
+    }
   }
 }
 
@@ -267,8 +295,27 @@ export async function h_sread(vm: any, operands: number[]) {
   const textBufferAddr = operands[0];
   const parseBufferAddr = operands[1];
 
+  // Position cursor at the input line (outside scrolling region)
+  // For V4+ games, this ensures the prompt doesn't interfere with game text
+  // For V3 games, the status line update already positioned cursor correctly,
+  // and game text is printed AFTER sread returns, so we don't move the cursor
+  if (vm.header.version >= 4) {
+    const termHeight = vm.terminalHeight || 24;
+    vm.inputOutputDevice.writeString(`\x1b[${termHeight};1H`);
+  }
+
   // Read input from user
   const input = await vm.inputOutputDevice.readLine();
+
+  // After input, clear the lower window and position cursor at start
+  // This ensures old content doesn't interfere with the new response
+  if (vm.header.version >= 4) {
+    const scrollTop = (vm.splitWindowLines || 0) + 1;
+    // Move to start of lower window and clear from cursor to end of screen
+    vm.inputOutputDevice.writeString(`\x1b[${scrollTop};1H\x1b[J`);
+    // Reset cursor column tracker for word wrapping
+    vm.cursorColumn = 0;
+  }
 
   if (vm.trace) {
     console.log(
@@ -394,12 +441,16 @@ export function h_set_window(vm: any, [window]: number[]) {
     if (window === 1) {
       // Upper window (status) - position cursor at top
       vm.inputOutputDevice.writeString("\x1b[1;1H");
+      // Reset cursor column for word wrapping
+      vm.cursorColumn = 0;
     } else {
       // Lower window (main scrolling area) - position after status lines
       const scrollTop = (vm.splitWindowLines || 0) + 1;
       // For v3 games with no split, position at line 1 (scrolling region is 1-23)
       const line = vm.splitWindowLines === 0 ? 1 : scrollTop;
       vm.inputOutputDevice.writeString(`\x1b[${line};1H`);
+      // Reset cursor column for word wrapping
+      vm.cursorColumn = 0;
     }
   }
 }
@@ -418,9 +469,13 @@ export function h_erase_window(vm: any, [window]: number[]) {
     if (signedWindow === -1 || signedWindow === 2) {
       // Clear entire screen: ESC[2J and move cursor to home: ESC[H
       vm.inputOutputDevice.writeString("\x1b[2J\x1b[H");
+      // Reset cursor column for word wrapping
+      vm.cursorColumn = 0;
     } else if (signedWindow === 0) {
       // Clear lower window - for now just clear from cursor to end of screen
       vm.inputOutputDevice.writeString("\x1b[J");
+      // Reset cursor column for word wrapping
+      vm.cursorColumn = 0;
     } else if (signedWindow === 1) {
       // Clear upper window - more complex in a split screen setup
       // For now, just clear from cursor to end of line
@@ -447,6 +502,8 @@ export function h_set_cursor(vm: any, [line, column]: number[]) {
   if (vm.inputOutputDevice) {
     const vt100Sequence = `\x1b[${line};${column}H`;
     vm.inputOutputDevice.writeString(vt100Sequence);
+    // Update cursor column for word wrapping (column is 1-indexed, convert to 0-indexed)
+    vm.cursorColumn = column - 1;
   }
 }
 
@@ -465,9 +522,65 @@ export function h_get_cursor(vm: any, [array]: number[]) {
 
 export function h_set_text_style(vm: any, [style]: number[]) {
   // Set text style (v4+)
-  // Currently no-op
+  // Bit 0 (1): Reverse video
+  // Bit 1 (2): Bold
+  // Bit 2 (4): Italic
+  // Bit 3 (8): Fixed-pitch font
+  // Style 0: Turn off all styles
+
   if (vm.trace) {
-    console.log(`@set_text_style ${style} (no-op)`);
+    console.log(`@set_text_style ${style}`);
+  }
+
+  if (!vm.inputOutputDevice) {
+    return;
+  }
+
+  // Track current text style on VM
+  if (vm.currentTextStyle === undefined) {
+    vm.currentTextStyle = 0;
+  }
+
+  // If style is 0, reset all styles
+  if (style === 0) {
+    if (vm.currentTextStyle !== 0) {
+      vm.inputOutputDevice.writeString("\x1b[0m");
+      vm.currentTextStyle = 0;
+    }
+    return;
+  }
+
+  // Build VT100 sequence for the requested styles
+  let sequence = "";
+
+  // Check which styles changed
+  const newStyles = style;
+  const oldStyles = vm.currentTextStyle;
+
+  // If switching between styles, reset first
+  if (oldStyles !== 0 && oldStyles !== newStyles) {
+    sequence += "\x1b[0m";
+  }
+
+  // Apply new styles
+  if (newStyles & 1) {
+    // Reverse video
+    sequence += "\x1b[7m";
+  }
+  if (newStyles & 2) {
+    // Bold
+    sequence += "\x1b[1m";
+  }
+  if (newStyles & 4) {
+    // Italic
+    sequence += "\x1b[3m";
+  }
+  // Note: We don't have a VT100 code for fixed-pitch vs proportional
+  // Most terminals are fixed-pitch anyway
+
+  if (sequence) {
+    vm.inputOutputDevice.writeString(sequence);
+    vm.currentTextStyle = newStyles;
   }
 }
 
@@ -481,11 +594,56 @@ export function h_buffer_mode(vm: any, [flag]: number[]) {
 
 export function h_output_stream(vm: any, [number, table]: number[]) {
   // Select output stream (v3+)
-  // Currently no-op
+  // Stream 1: Screen
+  // Stream 2: Transcript (not implemented)
+  // Stream 3: Memory table
+  // Stream 4: Commands (not implemented)
+  // Positive number = enable, negative = disable
+
   if (vm.trace) {
     console.log(
-      `@output_stream ${number}${table !== undefined ? `,${table}` : ""} (no-op)`,
+      `@output_stream ${number}${table !== undefined ? `,${table}` : ""}`,
     );
+  }
+
+  // Convert to signed 16-bit
+  const signedNumber = number > 32767 ? number - 65536 : number;
+
+  if (signedNumber === 3 && table !== undefined) {
+    // Enable memory stream 3
+    if (!vm.outputStreams) {
+      vm.outputStreams = { stream3: null };
+    }
+    vm.outputStreams.stream3 = {
+      table,
+      buffer: [],
+    };
+    if (vm.trace) {
+      console.log(`  Stream 3 enabled, writing to table at 0x${table.toString(16)}`);
+    }
+  } else if (signedNumber === -3) {
+    // Disable memory stream 3
+    if (vm.outputStreams && vm.outputStreams.stream3) {
+      const stream = vm.outputStreams.stream3;
+      const tableAddr = stream.table;
+      const text = stream.buffer.join('');
+
+      if (vm.memory) {
+        // Write word count (number of characters)
+        vm.memory.writeUInt16BE(text.length, tableAddr);
+
+        // Write text bytes
+        for (let i = 0; i < text.length; i++) {
+          vm.memory.writeUInt8(text.charCodeAt(i), tableAddr + 2 + i);
+        }
+      }
+
+      if (vm.trace) {
+        console.log(`  Stream 3 disabled, wrote ${text.length} chars: "${text}"`);
+      }
+
+      vm.outputStreams.stream3 = null;
+    }
   }
 }
 
@@ -531,16 +689,19 @@ export async function h_read_char(
 export async function h_save(
   vm: any,
   _operands: number[],
-  ctx: { branch?: (condition: boolean) => void; branchInfo?: { offset: number; branchOnTrue: boolean; branchBytes: number } },
+  ctx: { branch?: (condition: boolean) => void; store?: (v: number) => void; branchInfo?: { offset: number; branchOnTrue: boolean; branchBytes: number } },
 ) {
   // For v1-3, SAVE is a branch instruction. The decoder has already read the branch
   // offset bytes and advanced PC past them. We need to save the PC pointing to those
   // branch bytes (before they were read), so when we restore we can read and apply them.
   //
-  // The decoder tells us exactly how many bytes it read via ctx.branchInfo.branchBytes.
+  // For v4+, SAVE is a store instruction. The decoder has already read the store variable
+  // byte and advanced PC past it. We need to save the PC pointing to that store byte,
+  // so when we restore we can read it and store the result value.
   let savedPC = vm.pc;
 
-  if (ctx.branchInfo) {
+  if (vm.header && vm.header.version <= 3 && ctx.branchInfo) {
+    // V1-3: Branch instruction
     // Use the actual number of branch bytes read by the decoder
     const branchBytes = ctx.branchInfo.branchBytes;
 
@@ -548,9 +709,34 @@ export async function h_save(
     savedPC = vm.pc - branchBytes;
 
     if (vm.trace) {
-      console.log(`@save: PC=${vm.pc.toString(16)}, branchBytes=${branchBytes}, savedPC=${savedPC.toString(16)}`);
+      console.log(`@save (V${vm.header.version}): PC=${vm.pc.toString(16)}, branchBytes=${branchBytes}, savedPC=${savedPC.toString(16)}`);
+    }
+  } else if (vm.header && vm.header.version >= 4) {
+    // V4+: Store instruction
+    // Subtract 1 to point to the store variable byte
+    savedPC = vm.pc - 1;
+
+    if (vm.trace) {
+      console.log(`@save (V${vm.header.version}): PC=${vm.pc.toString(16)}, savedPC=${savedPC.toString(16)} (pointing to store byte)`);
     }
   }
+
+  // Helper to indicate success/failure based on version
+  const indicateSuccess = () => {
+    if (vm.header && vm.header.version >= 4) {
+      ctx.store?.(1); // V4+: store 1 for success
+    } else {
+      ctx.branch?.(true); // V1-3: branch on true for success
+    }
+  };
+
+  const indicateFailure = () => {
+    if (vm.header && vm.header.version >= 4) {
+      ctx.store?.(0); // V4+: store 0 for failure
+    } else {
+      ctx.branch?.(false); // V1-3: branch on false for failure
+    }
+  };
 
   try {
     const saveData = await vm.saveData(savedPC);
@@ -559,7 +745,7 @@ export async function h_save(
       if (vm.trace) {
         console.log(`@save failed: could not generate save data`);
       }
-      ctx.branch?.(false);
+      indicateFailure();
       return;
     }
 
@@ -572,7 +758,7 @@ export async function h_save(
       if (vm.trace) {
         console.log(`@save: saved to ${savePath}`);
       }
-      ctx.branch?.(true);
+      indicateSuccess();
     } else if (vm.runtime === 'browser') {
       // In browser environment, save to localStorage using game identifier
       const header = vm.getHeader();
@@ -580,7 +766,7 @@ export async function h_save(
         if (vm.trace) {
           console.log(`@save failed: could not get game header`);
         }
-        ctx.branch?.(false);
+        indicateFailure();
         return;
       }
 
@@ -594,19 +780,19 @@ export async function h_save(
       if (vm.trace) {
         console.log(`@save: saved ${saveData.length} bytes to localStorage key "${saveKey}"`);
       }
-      ctx.branch?.(true);
+      indicateSuccess();
     } else {
       // In other environments, just indicate success
       if (vm.trace) {
         console.log(`@save: generated save data (${saveData.length} bytes) but not persisting (unknown environment)`);
       }
-      ctx.branch?.(true);
+      indicateSuccess();
     }
   } catch (error) {
     if (vm.trace) {
       console.log(`@save failed: ${error}`);
     }
-    ctx.branch?.(false);
+    indicateFailure();
   }
 }
 

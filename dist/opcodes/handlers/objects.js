@@ -1,6 +1,7 @@
 "use strict";
 // Object tree manipulation handlers
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.isValidObjectId = isValidObjectId;
 exports.h_get_sibling = h_get_sibling;
 exports.h_get_child = h_get_child;
 exports.h_get_parent = h_get_parent;
@@ -11,9 +12,35 @@ exports.h_set_attr = h_set_attr;
 exports.h_clear_attr = h_clear_attr;
 exports.h_jin = h_jin;
 exports.h_insert_obj = h_insert_obj;
+// Helper function to validate object IDs
+function isValidObjectId(vm, objectId) {
+    if (objectId === 0)
+        return true; // 0 is a valid "null" object
+    // For V4+, max object number is typically < 1000
+    // Calculate max based on static memory size
+    if (vm.header) {
+        const propertyDefaultSize = vm.header.version <= 3 ? 31 * 2 : 63 * 2;
+        const objectEntrySize = vm.header.version <= 3 ? 9 : 14;
+        const objectTableStart = vm.header.objectTableAddress + propertyDefaultSize;
+        const staticMemStart = vm.header.staticMemoryAddress;
+        const maxObjects = Math.floor((staticMemStart - objectTableStart) / objectEntrySize);
+        if (objectId > maxObjects || objectId > 2000) {
+            console.error(`Invalid object ID ${objectId} (0x${objectId.toString(16)}). ` +
+                `Max objects for this game: ${maxObjects}. ` +
+                `This suggests memory corruption or a bug in variable handling.`);
+            return false;
+        }
+    }
+    return true;
+}
 function h_get_sibling(vm, [objectId], ctx) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
+        ctx.store?.(0);
+        ctx.branch?.(false);
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -22,7 +49,7 @@ function h_get_sibling(vm, [objectId], ctx) {
         siblingValue = vm.memory.readUInt8(objectAddress + 5);
     }
     else {
-        siblingValue = vm.memory.readUInt16BE(objectAddress + 9);
+        siblingValue = vm.memory.readUInt16BE(objectAddress + 8);
     }
     ctx.store?.(siblingValue);
     ctx.branch?.(siblingValue !== 0);
@@ -31,6 +58,17 @@ function h_get_child(vm, [objectId], ctx) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
         return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
+        if (vm.trace) {
+            console.log(`h_get_child: Invalid objectId ${objectId} (0x${objectId.toString(16)}), returning 0`);
+        }
+        ctx.store?.(0);
+        ctx.branch?.(false);
+        return;
+    }
+    if (vm.trace) {
+        console.log(`h_get_child: Getting address for valid objectId ${objectId} (0x${objectId.toString(16)})`);
     }
     const objectAddress = vm.getObjectAddress(objectId);
     let childValue;
@@ -46,6 +84,10 @@ function h_get_child(vm, [objectId], ctx) {
 function h_get_parent(vm, [objectId], ctx) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
+        ctx.store?.(0);
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -66,6 +108,9 @@ function h_remove_obj(vm, [objectId]) {
     if (objectId === 0) {
         return;
     }
+    if (!isValidObjectId(vm, objectId)) {
+        return;
+    }
     const objAddress = vm.getObjectAddress(objectId);
     // Read the object's parent
     let parentId;
@@ -76,6 +121,10 @@ function h_remove_obj(vm, [objectId]) {
         parentId = vm.memory.readUInt16BE(objAddress + 6);
     }
     if (parentId === 0) {
+        return;
+    }
+    if (!isValidObjectId(vm, parentId)) {
+        console.error(`h_remove_obj: Invalid parent ID ${parentId} for object ${objectId}`);
         return;
     }
     const parentAddress = vm.getObjectAddress(parentId);
@@ -95,7 +144,7 @@ function h_remove_obj(vm, [objectId]) {
             vm.memory.writeUInt8(objSiblingId, parentAddress + 6);
         }
         else {
-            objSiblingId = vm.memory.readUInt16BE(objAddress + 9);
+            objSiblingId = vm.memory.readUInt16BE(objAddress + 8);
             vm.memory.writeUInt16BE(objSiblingId, parentAddress + 10);
         }
     }
@@ -103,13 +152,17 @@ function h_remove_obj(vm, [objectId]) {
         // Find the object in the parent's child list
         let currentChildId = parentChildId;
         while (currentChildId !== 0) {
+            if (!isValidObjectId(vm, currentChildId)) {
+                console.error(`h_remove_obj: Invalid child ID ${currentChildId} in parent's child list`);
+                break;
+            }
             const currentChildAddress = vm.getObjectAddress(currentChildId);
             let currentChildSiblingId;
             if (vm.header.version <= 3) {
                 currentChildSiblingId = vm.memory.readUInt8(currentChildAddress + 5);
             }
             else {
-                currentChildSiblingId = vm.memory.readUInt16BE(currentChildAddress + 9);
+                currentChildSiblingId = vm.memory.readUInt16BE(currentChildAddress + 8);
             }
             if (currentChildSiblingId === objectId) {
                 let objSiblingId;
@@ -118,8 +171,8 @@ function h_remove_obj(vm, [objectId]) {
                     vm.memory.writeUInt8(objSiblingId, currentChildAddress + 5);
                 }
                 else {
-                    objSiblingId = vm.memory.readUInt16BE(objAddress + 9);
-                    vm.memory.writeUInt16BE(objSiblingId, currentChildAddress + 9);
+                    objSiblingId = vm.memory.readUInt16BE(objAddress + 8);
+                    vm.memory.writeUInt16BE(objSiblingId, currentChildAddress + 8);
                 }
                 break;
             }
@@ -133,12 +186,15 @@ function h_remove_obj(vm, [objectId]) {
     }
     else {
         vm.memory.writeUInt16BE(0, objAddress + 6);
-        vm.memory.writeUInt16BE(0, objAddress + 9);
+        vm.memory.writeUInt16BE(0, objAddress + 8);
     }
 }
 function h_print_obj(vm, [objectId]) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -154,6 +210,10 @@ function h_print_obj(vm, [objectId]) {
 function h_test_attr(vm, [objectId, attrNum], ctx) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
+        ctx.branch?.(false);
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -173,6 +233,9 @@ function h_set_attr(vm, [objectId, attrNum]) {
         console.error("Memory or header not loaded");
         return;
     }
+    if (!isValidObjectId(vm, objectId)) {
+        return;
+    }
     const objectAddress = vm.getObjectAddress(objectId);
     const attrByteCount = vm.header.version <= 3 ? 4 : 6;
     const attrByteIndex = Math.floor(attrNum / 8);
@@ -188,6 +251,9 @@ function h_set_attr(vm, [objectId, attrNum]) {
 function h_clear_attr(vm, [objectId, attrNum]) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!isValidObjectId(vm, objectId)) {
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -207,6 +273,10 @@ function h_jin(vm, [obj1, obj2], ctx) {
         console.error("Memory or header not loaded");
         return;
     }
+    if (!isValidObjectId(vm, obj1)) {
+        ctx.branch?.(false);
+        return;
+    }
     const obj1Address = vm.getObjectAddress(obj1);
     let parent;
     if (vm.header.version <= 3) {
@@ -222,6 +292,9 @@ function h_insert_obj(vm, [objectId, destId]) {
         console.error("Memory or header not loaded");
         return;
     }
+    if (!isValidObjectId(vm, objectId) || !isValidObjectId(vm, destId)) {
+        return;
+    }
     const objAddress = vm.getObjectAddress(objectId);
     const destAddress = vm.getObjectAddress(destId);
     // First, remove object from its current parent
@@ -233,6 +306,10 @@ function h_insert_obj(vm, [objectId, destId]) {
                     if (!vm.lastRead.startsWith("dr") && !vm.lastRead.startsWith("ta"))
                         vm.setPlayerObjectNumber(objectId);
             }
+            if (!isValidObjectId(vm, oldParent)) {
+                console.error(`h_insert_obj: Invalid old parent ID ${oldParent} for object ${objectId}`);
+                return;
+            }
             const oldParentAddress = vm.getObjectAddress(oldParent);
             const oldParentChild = vm.memory.readUInt8(oldParentAddress + 6);
             if (oldParentChild === objectId) {
@@ -242,6 +319,10 @@ function h_insert_obj(vm, [objectId, destId]) {
             else {
                 let currentObj = oldParentChild;
                 while (currentObj !== 0) {
+                    if (!isValidObjectId(vm, currentObj)) {
+                        console.error(`h_insert_obj (V3): Invalid object ID ${currentObj} in old parent's child list`);
+                        break;
+                    }
                     const currentObjAddress = vm.getObjectAddress(currentObj);
                     const nextSibling = vm.memory.readUInt8(currentObjAddress + 5);
                     if (nextSibling === objectId) {
@@ -267,6 +348,10 @@ function h_insert_obj(vm, [objectId, destId]) {
                     vm.setPlayerObjectNumber(objectId);
         }
         if (oldParent !== 0) {
+            if (!isValidObjectId(vm, oldParent)) {
+                console.error(`h_insert_obj (V4+): Invalid old parent ID ${oldParent} for object ${objectId}`);
+                return;
+            }
             const oldParentAddress = vm.getObjectAddress(oldParent);
             const oldParentChild = vm.memory.readUInt16BE(oldParentAddress + 10);
             if (oldParentChild === objectId) {
@@ -276,6 +361,10 @@ function h_insert_obj(vm, [objectId, destId]) {
             else {
                 let currentObj = oldParentChild;
                 while (currentObj !== 0) {
+                    if (!isValidObjectId(vm, currentObj)) {
+                        console.error(`h_insert_obj (V4+): Invalid object ID ${currentObj} in old parent's child list`);
+                        break;
+                    }
                     const currentObjAddress = vm.getObjectAddress(currentObj);
                     const nextSibling = vm.memory.readUInt16BE(currentObjAddress + 8);
                     if (nextSibling === objectId) {

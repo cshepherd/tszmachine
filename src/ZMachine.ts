@@ -638,29 +638,42 @@ class ZMachine {
       this.pc = savedPC;
     }
 
-    // After restoring, the PC points to the branch offset bytes of the original SAVE instruction.
-    // According to the Z-Machine spec (§6.3.3), after RESTORE succeeds:
-    // - In V1-3: SAVE is a branch instruction. After RESTORE, it should branch as if SAVE returned 2
-    //   (not 0 or 1). The value 2 indicates "game was just restored".
-    // - Since 2 is non-zero (true), the branch should be taken if branchOnTrue is true.
-    //
-    // So we need to:
-    // 1. Read the branch offset bytes (advancing PC past them)
-    // 2. Apply the branch as if SAVE returned 2 (non-zero/true)
-    const branchInfo = this._readBranchOffset();
+    // After restoring, handle SAVE/RESTORE result based on version:
+    // - V1-3: SAVE/RESTORE are branch instructions. PC points to branch offset bytes.
+    //         After RESTORE succeeds, branch as if SAVE returned 2 (non-zero/true).
+    // - V4+:  SAVE/RESTORE are store instructions. PC points to store variable byte.
+    //         After RESTORE succeeds, store value 2 to indicate "game was just restored".
 
-    if (this.trace) {
-      console.log(`Restored from save: PC before branch=${savedPC.toString(16)}, after reading branch=${this.pc.toString(16)}`);
-      console.log(`Branch info: offset=${branchInfo.offset}, branchOnTrue=${branchInfo.branchOnTrue}`);
-    }
+    if (this.header.version <= 3) {
+      // V1-3: Read branch offset and apply branch
+      const branchInfo = this._readBranchOffset();
 
-    // Apply the branch as if SAVE returned 2 (non-zero, i.e., true)
-    // This means: if branchOnTrue is true, do branch (condition is true)
-    //            if branchOnTrue is false, don't branch (condition is true)
-    this._applyBranch(branchInfo.offset, branchInfo.branchOnTrue, true);
+      if (this.trace) {
+        console.log(`Restored from save (V${this.header.version}): PC before branch=${savedPC.toString(16)}, after reading branch=${this.pc.toString(16)}`);
+        console.log(`Branch info: offset=${branchInfo.offset}, branchOnTrue=${branchInfo.branchOnTrue}`);
+      }
 
-    if (this.trace) {
-      console.log(`Restored from save: final PC=${this.pc.toString(16)}, stack=${this.stack.length}, callStack=${this.callStack.length}, frames=${frames.length}`);
+      // Apply the branch as if SAVE returned 2 (non-zero, i.e., true)
+      this._applyBranch(branchInfo.offset, branchInfo.branchOnTrue, true);
+
+      if (this.trace) {
+        console.log(`Restored from save: final PC=${this.pc.toString(16)}, stack=${this.stack.length}, callStack=${this.callStack.length}, frames=${frames.length}`);
+      }
+    } else {
+      // V4+: Read store variable and store value 2
+      const storeVar = this.memory.readUInt8(this.pc);
+      this.pc++;
+
+      if (this.trace) {
+        console.log(`Restored from save (V${this.header.version}): PC=${savedPC.toString(16)}, storeVar=${storeVar.toString(16)}, storing value 2`);
+      }
+
+      // Store value 2 (indicating "game was just restored")
+      this._storeVariable(storeVar, 2);
+
+      if (this.trace) {
+        console.log(`Restored from save: final PC=${this.pc.toString(16)}, stack=${this.stack.length}, callStack=${this.callStack.length}, frames=${frames.length}`);
+      }
     }
 
     return true;
@@ -756,20 +769,48 @@ class ZMachine {
   }
 
   private parseHeader(buffer: Buffer) {
+    const version = buffer.readUInt8(0);
+
+    // Calculate file length based on version
+    const fileLengthField = buffer.readUInt16BE(0x1a);
+    let fileLength: number;
+    if (version <= 3) {
+      fileLength = fileLengthField * 2;
+    } else if (version <= 5) {
+      fileLength = fileLengthField * 4;
+    } else {
+      fileLength = fileLengthField * 8;
+    }
+
+    const objectTableAddress = buffer.readUInt16BE(10);
+    const staticMemoryAddress = buffer.readUInt16BE(0x0e);
+
+    // Validate header values
+    if (objectTableAddress === 0 || objectTableAddress > 65535) {
+      console.error(`WARNING: Invalid object table address in header: ${objectTableAddress} (0x${objectTableAddress.toString(16)})`);
+    }
+    if (objectTableAddress >= staticMemoryAddress) {
+      console.error(`WARNING: Object table address ${objectTableAddress} (0x${objectTableAddress.toString(16)}) >= static memory address ${staticMemoryAddress} (0x${staticMemoryAddress.toString(16)})`);
+    }
+
+    if (this.trace) {
+      console.log(`Header parsed: version=${version}, objectTableAddr=0x${objectTableAddress.toString(16)}, staticMemAddr=0x${staticMemoryAddress.toString(16)}`);
+    }
+
     this.header = {
-      version: buffer.readUInt8(0),
+      version: version,
       release: buffer.readUInt16BE(2),
       serial: buffer.toString("ascii", 0x12, 0x18).replace(/\0/g, ""), // 0x12-0x17
       checksum: buffer.readUInt16BE(0x1c),
       initialProgramCounter: buffer.readUInt16BE(6),
       dictionaryAddress: buffer.readUInt16BE(8),
-      objectTableAddress: buffer.readUInt16BE(10),
+      objectTableAddress: objectTableAddress,
       globalVariablesAddress: buffer.readUInt16BE(12),
-      staticMemoryAddress: buffer.readUInt16BE(0x0e),
+      staticMemoryAddress: staticMemoryAddress,
       dynamicMemoryAddress: buffer.readUInt16BE(0x04), // High memory base
       highMemoryAddress: buffer.readUInt16BE(0x04), // High memory base (same as dynamic)
       abbreviationsAddress: buffer.readUInt16BE(0x18),
-      fileLength: buffer.readUInt16BE(0x1a) * 2,
+      fileLength: fileLength,
       checksumValid: false,
       alphabetIdentifier: buffer.readUInt16BE(0x34), // 0x34 for v5+, may not exist in v3
     };
@@ -916,20 +957,79 @@ class ZMachine {
 
   private getObjectAddress(objectId: number): number {
     if (!this.header) throw new Error("Header not loaded");
+
+    // Validate object ID first
     const propertyDefaultSize = this.getPropertyDefaultSize();
     const objectEntrySize = this.getObjectEntrySize();
-    return (
+    const objectTableStart = this.header.objectTableAddress + propertyDefaultSize;
+    const staticMemStart = this.header.staticMemoryAddress;
+    const maxObjects = Math.floor((staticMemStart - objectTableStart) / objectEntrySize);
+
+    if (objectId < 0 || objectId > maxObjects || objectId > 2000) {
+      // Instead of throwing, return the address for object 0 (which is always valid)
+      // This makes the interpreter more robust against game bugs
+      if (this.trace) {
+        console.log(
+          `getObjectAddress: Invalid object ID ${objectId} (0x${objectId.toString(16)}), ` +
+          `returning object 0 address. Valid range: 1-${maxObjects}.`
+        );
+      }
+      // Return address for object table start (treating as object 0)
+      return objectTableStart;
+    }
+
+    // Defensive check: object table address should be reasonable
+    // For most games, it's in the first 64KB and typically < 10000
+    if (this.header.objectTableAddress < 0 || this.header.objectTableAddress > 65535) {
+      throw new Error(
+        `Object table address corrupted: ${this.header.objectTableAddress} (0x${this.header.objectTableAddress.toString(16)}). Expected value from header at 0x0a-0x0b.`
+      );
+    }
+
+    // Also verify it matches what's in memory at offset 0x0a
+    if (this.memory) {
+      const memoryTableAddr = this.memory.readUInt16BE(0x0a);
+      if (memoryTableAddr !== this.header.objectTableAddress) {
+        console.error(
+          `WARNING: Object table address mismatch! header.objectTableAddress=${this.header.objectTableAddress} (0x${this.header.objectTableAddress.toString(16)}), memory[0x0a]=${memoryTableAddr} (0x${memoryTableAddr.toString(16)})`
+        );
+        // Use the value from memory since that's what was restored
+        this.header.objectTableAddress = memoryTableAddr;
+      }
+    }
+    const address =
       this.header.objectTableAddress +
       propertyDefaultSize +
-      (objectId - 1) * objectEntrySize
-    );
+      (objectId - 1) * objectEntrySize;
+
+    // Validate the computed address is within bounds
+    if (this.memory && address >= this.memory.length) {
+      throw new Error(
+        `Computed object address ${address} (0x${address.toString(16)}) for object ${objectId} is out of bounds (memory size: ${this.memory.length}). ` +
+        `objectTableAddress=${this.header.objectTableAddress}, propertyDefaultSize=${propertyDefaultSize}, objectEntrySize=${objectEntrySize}`
+      );
+    }
+
+    return address;
   }
 
   private getObjectName(objectId: number): string {
     if (!this.memory || !this.header) return "";
 
+    // Validate object ID before trying to get its address
+    if (objectId === 0) return "";
+
+    const propertyDefaultSize = this.getPropertyDefaultSize();
+    const objectEntrySize = this.getObjectEntrySize();
+    const objectTableStart = this.header.objectTableAddress + propertyDefaultSize;
+    const staticMemStart = this.header.staticMemoryAddress;
+    const maxObjects = Math.floor((staticMemStart - objectTableStart) / objectEntrySize);
+
+    if (objectId < 0 || objectId > maxObjects || objectId > 2000) {
+      return "";
+    }
+
     const objectAddress = this.getObjectAddress(objectId);
-    const objectEntrySize = this.header.version <= 3 ? 9 : 14;
     const propertyTableAddr = this.memory.readUInt16BE(
       objectAddress + objectEntrySize - 2,
     );
@@ -976,11 +1076,89 @@ class ZMachine {
 
   print(abbreviations: boolean = true) {
     let fullString = this.decodeZSCII(abbreviations);
-    if (this.inputOutputDevice) {
-      this.inputOutputDevice.writeString(fullString);
+
+    // Check if output stream 3 (memory) is active
+    if ((this as any).outputStreams && (this as any).outputStreams.stream3) {
+      // Redirect to memory stream instead of screen
+      (this as any).outputStreams.stream3.buffer.push(fullString);
+      if (this.trace) {
+        console.log(`  [Stream 3: buffered "${fullString}"]`);
+      }
     } else {
-      console.log(fullString);
+      // Normal output to screen with word wrapping
+      if (this.inputOutputDevice) {
+        const wrapped = this.wrapText(fullString);
+        this.inputOutputDevice.writeString(wrapped);
+      } else {
+        console.log(fullString);
+      }
     }
+  }
+
+  wrapText(text: string): string {
+    // Don't wrap in upper window (status area) or if we don't know the width
+    const currentWindow = (this as any).currentWindow;
+    if (currentWindow === 1) {
+      return text; // Upper window - don't wrap (status bar, etc.)
+    }
+
+    // Get terminal width
+    let termWidth = 80; // Default
+    if (this.inputOutputDevice?.cols) {
+      termWidth = this.inputOutputDevice.cols;
+    } else if (typeof process !== 'undefined' && process.stdout?.columns) {
+      termWidth = process.stdout.columns;
+    }
+
+    // Initialize cursor column tracker if needed
+    if ((this as any).cursorColumn === undefined) {
+      (this as any).cursorColumn = 0;
+    }
+
+    let result = '';
+    let lineStart = 0; // Track start of current line in result
+    let col = (this as any).cursorColumn;
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+
+      // Handle newlines - reset column to 0
+      if (char === '\n') {
+        result += char;
+        col = 0;
+        lineStart = result.length;
+        continue;
+      }
+
+      // Check if we're at or past the width limit
+      if (col >= termWidth) {
+        // Would exceed - need to wrap before adding this character
+        // Find the last space on the current line to wrap at word boundary
+        const currentLine = result.substring(lineStart);
+        const lastSpaceInLine = currentLine.lastIndexOf(' ');
+
+        if (lastSpaceInLine >= 0) {
+          // Found a space - replace it with newline
+          const wrapPoint = lineStart + lastSpaceInLine;
+          result = result.substring(0, wrapPoint) + '\n' + result.substring(wrapPoint + 1);
+          lineStart = wrapPoint + 1;
+          col = result.length - lineStart;
+        } else {
+          // No space found on this line - force wrap here
+          result += '\n';
+          col = 0;
+          lineStart = result.length;
+        }
+      }
+
+      result += char;
+      col++;
+    }
+
+    // Update cursor column for next print call
+    (this as any).cursorColumn = col;
+
+    return result;
   }
 
   // --- Helpers used by the decoder ---
@@ -993,6 +1171,11 @@ class ZMachine {
 
   _fetchWord(): number {
     if (!this.memory) throw new Error("Memory not loaded");
+    if (this.pc < 0 || this.pc >= this.memory.length - 1) {
+      throw new Error(
+        `PC out of bounds: ${this.pc} (0x${this.pc.toString(16)}), memory size: ${this.memory.length}`,
+      );
+    }
     const word = this.memory.readUInt16BE(this.pc);
     this.pc += 2;
     return word;
@@ -1272,6 +1455,7 @@ class ZMachine {
             const abbrevTableAddr =
               this.header.abbreviationsAddress + abbreviationNumber * 2;
             const abbrevTableEntry = this.memory.readUInt16BE(abbrevTableAddr);
+            // Abbreviation entries are word addresses in all versions
             const abbrevStringAddr = abbrevTableEntry * 2;
 
             if (this.trace) {

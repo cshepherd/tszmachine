@@ -74,24 +74,27 @@ function h_show_status(vm) {
         }
         rightText = `Score: ${score}  Moves: ${turns}`;
     }
-    // Build status line with padding
-    // Use termWidth - 1 to avoid wrapping at column 80
+    // Build status line with padding to fill the entire width
     const leftText = " " + locationName;
-    const padding = termWidth - leftText.length - rightText.length - 1;
+    const padding = termWidth - leftText.length - rightText.length;
     const statusLine = leftText + " ".repeat(Math.max(0, padding)) + rightText;
-    // Truncate if too long, ensure we don't reach the last column to avoid wrap
-    const finalStatusLine = statusLine.slice(0, termWidth - 1);
+    // Truncate if too long (shouldn't happen, but safety check)
+    const finalStatusLine = statusLine.slice(0, termWidth);
     // Update status line on line 1
     // Save cursor, update status line, then restore cursor to preserve current position
     // Build the complete status line update sequence
     const statusLineSequence = "\x1b7" + // Save cursor position
         "\x1b[1;1H" + // Move to line 1, column 1
+        "\x1b[K" + // Clear line
         "\x1b[7m" + // Reverse video
         finalStatusLine +
         "\x1b[0m" + // Reset attributes
         "\x1b8"; // Restore cursor position
     // Use inputOutputDevice to write (works in both Node.js and React/xtermjs)
     vm.inputOutputDevice.writeString(statusLineSequence);
+    // Reset cursor column tracker since cursor was saved/restored
+    // The cursor is back where it was (start of line after prompt)
+    vm.cursorColumn = 0;
 }
 function h_verify(vm, _ops, ctx) {
     // Verify game file checksum

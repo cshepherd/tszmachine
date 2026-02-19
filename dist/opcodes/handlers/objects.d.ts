@@ -1,3 +1,4 @@
+export declare function isValidObjectId(vm: any, objectId: number): boolean;
 export declare function h_get_sibling(vm: any, [objectId]: number[], ctx: {
     store?: (v: number) => void;
     branch?: (c: boolean) => void;

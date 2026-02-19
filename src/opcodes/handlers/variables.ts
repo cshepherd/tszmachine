@@ -52,5 +52,11 @@ export function h_dec_chk(
 
   const signedNew = toSigned16(newValue);
   const signedCompare = toSigned16(compareValue);
-  ctx.branch?.(signedNew < signedCompare);
+  const condition = signedNew < signedCompare;
+
+  if (vm.trace && varNum === 1) {
+    console.log(`@dec_chk var=${varNum} oldVal=${value} newVal=${newValue} (signed=${signedNew}) cmp=${signedCompare} cond=${condition}`);
+  }
+
+  ctx.branch?.(condition);
 }

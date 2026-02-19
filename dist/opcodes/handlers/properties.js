@@ -1,11 +1,12 @@
 "use strict";
-// Property manipulation handlers
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.h_get_prop_len = h_get_prop_len;
 exports.h_get_prop = h_get_prop;
 exports.h_get_prop_addr = h_get_prop_addr;
 exports.h_get_next_prop = h_get_next_prop;
 exports.h_put_prop = h_put_prop;
+// Property manipulation handlers
+const objects_1 = require("./objects");
 function h_get_prop_len(vm, [propDataAddr], ctx) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
@@ -36,6 +37,10 @@ function h_get_prop_len(vm, [propDataAddr], ctx) {
 function h_get_prop(vm, [objectId, propNum], ctx) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!(0, objects_1.isValidObjectId)(vm, objectId)) {
+        ctx.store?.(0);
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -97,6 +102,10 @@ function h_get_prop_addr(vm, [objectId, propNum], ctx) {
         console.error("Memory or header not loaded");
         return;
     }
+    if (!(0, objects_1.isValidObjectId)(vm, objectId)) {
+        ctx.store?.(0);
+        return;
+    }
     const objectAddress = vm.getObjectAddress(objectId);
     const objectEntrySize = vm.header.version <= 3 ? 9 : 14;
     const propertyTableAddr = vm.memory.readUInt16BE(objectAddress + objectEntrySize - 2);
@@ -140,6 +149,10 @@ function h_get_prop_addr(vm, [objectId, propNum], ctx) {
 function h_get_next_prop(vm, [objectId, propNum], ctx) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!(0, objects_1.isValidObjectId)(vm, objectId)) {
+        ctx.store?.(0);
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);
@@ -217,6 +230,9 @@ function h_get_next_prop(vm, [objectId, propNum], ctx) {
 function h_put_prop(vm, [objectId, propNum, value]) {
     if (!vm.memory || !vm.header) {
         console.error("Memory or header not loaded");
+        return;
+    }
+    if (!(0, objects_1.isValidObjectId)(vm, objectId)) {
         return;
     }
     const objectAddress = vm.getObjectAddress(objectId);

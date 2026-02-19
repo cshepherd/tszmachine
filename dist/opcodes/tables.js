@@ -453,7 +453,13 @@ exports.TABLE_VAR[0xf6] = (0, types_1.dv)(0xf6, {
     doesStore: true,
     handler: async (vm, ops, ctx) => await (0, io_1.h_read_char)(vm, ops, ctx),
 });
-// TABLE_VAR[0xf7] = scan_table (v4+) - TODO: implement h_scan_table
+exports.TABLE_VAR[0xf7] = (0, types_1.dv)(0xf7, {
+    name: "scan_table",
+    minVersion: 4,
+    doesStore: true,
+    doesBranch: true,
+    handler: (vm, ops, ctx) => (0, memory_1.h_scan_table)(vm, ops, ctx),
+});
 exports.TABLE_VAR[0xf8] = (0, types_1.dv)(0xf8, {
     name: "not",
     minVersion: 5,
